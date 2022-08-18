@@ -1,0 +1,231 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Carlovy
+//@version=5
+    
+strategy(title="Strategy Template", shorttitle="STRAT-TMPLT", overlay=true, pyramiding=0, default_qty_value=100, commission_value=0.1, commission_type=strategy.commission.percent, initial_capital=100)
+
+
+
+
+// 8888888 888b    888 8888888b.  888     888 88888888888 .d8888b.  
+//   888   8888b   888 888   Y88b 888     888     888    d88P  Y88b 
+//   888   88888b  888 888    888 888     888     888    Y88b.      
+//   888   888Y88b 888 888   d88P 888     888     888     "Y888b.   
+//   888   888 Y88b888 8888888P"  888     888     888        "Y88b. 
+//   888   888  Y88888 888        888     888     888          "888 
+//   888   888   Y8888 888        Y88b. .d88P     888    Y88b  d88P 
+// 8888888 888    Y888 888         "Y88888P"      888     "Y8888P"
+
+i_emaFast       = input.int    (9    , 'EMA Fast'                              , group = 'Basic Indicators')
+i_emaMed        = input.int    (55   , 'EMA Medium'                            , group = 'Basic Indicators')
+i_emaSlow       = input.int    (200  , 'EMA Slow'                              , group = 'Basic Indicators')
+i_rsi           = input.int    (14   , 'RSI Close'                             , group = 'Basic Indicators')
+i_adxlen        = input.int    (14   , 'ADX diLength'                          , group = 'ADX')
+i_dilen         = input.int    (14   , 'ADX Smoothing'                         , group = 'ADX')
+i_tsl_enable    = input.bool   (true , 'Enable ATR Trailing StopLoss Strategy?', group = 'ATR Supertrend StopLoss and R:R ratio')
+i_atrLen        = input.int    (14   , 'ATR Length'                            , group = 'ATR Supertrend StopLoss and R:R ratio')
+i_atrFactor     = input.int    (2    , 'ATR Factor'                            , group = 'ATR Supertrend StopLoss and R:R ratio')
+i_ATR_RR        = input.int    (2    , 'ATR R:R ratio'                         , group = 'ATR Supertrend StopLoss and R:R ratio')
+i_lookback      = input.int    (7    , 'How far to look back for High/Lows'    , group = 'Position Managment')
+i_account       = input.int    (100  , 'Total Account'                         , group = 'Position Managment')
+i_position_size = input.int    (10   , '% Position Size from Total Account'    , group = 'Position Managment')  
+i_leverage      = input.int    (2    , 'Leverage'                              , group = 'Position Managment')
+i_stopLoss      = input.int    (1    , 'StopLoss'                              , group = 'Position Managment')
+i_localsl       = input.bool   (false, 'Enable Local High/Low Stop Loss'       , group = 'Position Managment')
+i_multiTP       = input.bool   (true , 'Enable Multiple Take Profits'          , group = 'Position Managment')
+i_tp1           = input.float  (1    , 'Take Profit 1'                         , group = 'Position Managment')
+i_tp2           = input.float  (1.2  , 'Take Profit 2'                         , group = 'Position Managment')
+i_tp1_q         = input.float  (50   , 'Take Profit 1 Quantity Percent'        , group = 'Position Managment')
+i_tp2_q         = input.float  (25   , 'Take Profit 2 Quantity Percent'        , group = 'Position Managment')
+float entry_price = na
+float sl = na
+float tp1 = na
+float tp2 = na
+float fixed_tp = na
+
+
+
+
+// 8888888 888b    888 8888888b. 8888888 .d8888b.        d8888 88888888888 .d88888b.  8888888b.   .d8888b.  
+//   888   8888b   888 888  "Y88b  888  d88P  Y88b      d88888     888    d88P" "Y88b 888   Y88b d88P  Y88b 
+//   888   88888b  888 888    888  888  888    888     d88P888     888    888     888 888    888 Y88b.      
+//   888   888Y88b 888 888    888  888  888           d88P 888     888    888     888 888   d88P  "Y888b.   
+//   888   888 Y88b888 888    888  888  888          d88P  888     888    888     888 8888888P"      "Y88b. 
+//   888   888  Y88888 888    888  888  888    888  d88P   888     888    888     888 888 T88b         "888 
+//   888   888   Y8888 888  .d88P  888  Y88b  d88P d8888888888     888    Y88b. .d88P 888  T88b  Y88b  d88P 
+// 8888888 888    Y888 8888888P" 8888888 "Y8888P" d88P     888     888     "Y88888P"  888   T88b  "Y8888P"
+
+rsi     = ta.rsi(close, i_rsi)
+emaFast = ta.ema(close, i_emaFast)
+emaMed  = ta.ema(close, i_emaMed )
+emaSlow = ta.ema(close, i_emaSlow)
+
+// --------- // --------- // --------- // --------- // --------- // --------- //
+//                           ATR Supertrend                                   //
+// --------- // --------- // --------- // --------- // --------- // --------- //
+[atr_supertrend, atr_direction] = ta.supertrend(i_atrFactor, i_atrLen)
+upTrend    = plot(atr_direction < 0 ? atr_supertrend : na        , "Up Trend"  , color = color.purple, style=plot.style_linebr)
+downTrend  = plot(atr_direction < 0 ? na         : atr_supertrend, "Down Trend", color = color.navy  , style=plot.style_linebr)
+
+
+// --------- // --------- // --------- // --------- // --------- // --------- //
+//                              ADX                                           //
+// --------- // --------- // --------- // --------- // --------- // --------- //
+dirmov(len) =>
+	up = ta.change(high)
+	down = -ta.change(low)
+	plusDM = na(up) ? na : (up > down and up > 0 ? up : 0)
+	minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+	truerange = ta.rma(ta.tr, len)
+	plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+	minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+	[plus, minus]
+adxx(dilen, adxlen) =>
+	[plus, minus] = dirmov(dilen)
+	sum = plus + minus
+	adx = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+adx = adxx(i_dilen, i_adxlen)
+
+
+// --------- // --------- // --------- // --------- // --------- // --------- //
+//                          SQZMOM by LazyBear                                //
+// --------- // --------- // --------- // --------- // --------- // --------- //
+length   = input(20, title="BB Length")
+mult     = input(2.0,title="BB MultFactor")
+lengthKC = input(20, title="KC Length")
+multKC   = input(1.5,title="KC MultFactor")
+useTrueRange = input.bool(true, title="Use TrueRange (KC)")
+// Calculate BB
+source = close
+basis = ta.sma(source, length)
+dev = multKC * ta.stdev(source, length)
+upperBB = basis + dev
+lowerBB = basis - dev
+// Calculate KC
+ma = ta.sma(source, lengthKC)
+rangex = useTrueRange ? ta.tr : (high - low)
+rangema = ta.sma(rangex, lengthKC)
+upperKC = ma + rangema * multKC
+lowerKC = ma - rangema * multKC
+sqzOn  = (lowerBB > lowerKC) and (upperBB < upperKC)
+sqzOff = (lowerBB < lowerKC) and (upperBB > upperKC)
+noSqz  = (sqzOn == false) and (sqzOff == false)
+val = ta.linreg(source  -  math.avg(math.avg(ta.highest(high, lengthKC), ta.lowest(low, lengthKC)),ta.sma(close,lengthKC)), lengthKC,0)
+bcolor = val > 0 ? (val > nz(val[1]) ? color.lime : color.green) : (val < nz(val[1]) ? color.red : color.maroon)
+scolor = noSqz ? color.blue : sqzOn ? color.black : color.gray 
+
+
+
+
+//  .d8888b. 88888888888 8888888b.         d8888 88888888888 8888888888 .d8888b. Y88b   d88P 
+// d88P  Y88b    888     888   Y88b       d88888     888     888       d88P  Y88b Y88b d88P  
+// Y88b.         888     888    888      d88P888     888     888       888    888  Y88o88P   
+//  "Y888b.      888     888   d88P     d88P 888     888     8888888   888          Y888P    
+//     "Y88b.    888     8888888P"     d88P  888     888     888       888  88888    888     
+//       "888    888     888 T88b     d88P   888     888     888       888    888    888     
+// Y88b  d88P    888     888  T88b   d8888888888     888     888       Y88b  d88P    888     
+//  "Y8888P"     888     888   T88b d88P     888     888     8888888888 "Y8888P88    888
+per_up(pcnt) =>
+    strategy.position_size != 0 ? math.round(pcnt / 100 * strategy.position_avg_price + strategy.position_avg_price) : float(na)
+per_low(pcnt) =>
+    strategy.position_size != 0 ? math.round((1 - pcnt / 100) * strategy.position_avg_price) : float(na)
+    
+longCondition  = close > emaSlow and atr_direction < 0 and adx > 30 
+shortCondition = close < emaSlow and atr_direction > 0 and adx > 30
+
+
+if strategy.position_size == 0
+    strategy.entry("Long" , strategy.long , when=longCondition , qty=(i_position_size/100)*i_account *i_leverage)
+    strategy.entry("Short", strategy.short, when=shortCondition, qty=(i_position_size/100)*i_account *i_leverage)
+if strategy.position_size > 0
+    //SWING LOW/HIGHT STOPLOSS sl  := (i_tsl_enable ? ta.lowest(low, i_lookback) : per_low(i_stopLoss))
+    sl  := (i_tsl_enable ? (atr_supertrend) : per_low(i_stopLoss))
+    fixed_tp := ta.valuewhen(bar_index == strategy.opentrades.entry_bar_index(0), atr_supertrend, 1)
+    //tp1 := (i_tsl_enable ? (strategy.position_avg_price + i_ATR_RR*(strategy.position_avg_price-fixed_tp)) : per_up(i_tp1))
+    tp2 := (i_tsl_enable ? (strategy.position_avg_price + i_ATR_RR*(strategy.position_avg_price-fixed_tp)) : per_up(i_tp2))
+    //strategy.exit("T1_long", qty_percent = i_tp1_q, limit = tp1, stop = sl)
+    strategy.exit("T2_long",                        limit = tp2, stop = sl)
+if strategy.position_size < 0
+    sl       := (i_tsl_enable                           ? atr_supertrend : per_low(i_stopLoss))
+    fixed_tp := ta.valuewhen(bar_index == strategy.opentrades.entry_bar_index(0), atr_supertrend, 1)
+    tp2 := (i_tsl_enable ? (strategy.position_avg_price + i_ATR_RR*(strategy.position_avg_price-fixed_tp)) : per_up(i_tp1))
+    //strategy.exit("T1_Short", qty_percent = i_tp1_q, profit = tp1, stop = sl)
+    strategy.exit("T2_Short",                        profit = tp2, stop = sl)
+
+
+
+
+// 8888888b.  888      .d88888b. 88888888888 .d8888b.  
+// 888   Y88b 888     d88P" "Y88b    888    d88P  Y88b 
+// 888    888 888     888     888    888    Y88b.      
+// 888   d88P 888     888     888    888     "Y888b.   
+// 8888888P"  888     888     888    888        "Y88b. 
+// 888        888     888     888    888          "888 
+// 888        888     Y88b. .d88P    888    Y88b  d88P 
+// 888        88888888 "Y88888P"     888     "Y8888P"
+
+plot(emaSlow, "EMA Slow",   color=color.yellow)
+//tp1p = plot(tp1        , color = color.green, linewidth = 2, style = plot.style_linebr, title="Take Profit 1")
+tp2p = plot(tp2        , color = color.green, linewidth = 2, style = plot.style_linebr, title="Take Profit 2")
+ep   = plot(strategy.position_avg_price, color = color.white, linewidth = 2, style = plot.style_linebr, title="Entry Price")
+sll  = plot(sl         , color = color.red  , linewidth = 2, style = plot.style_linebr, title="Stop Loss")
+fill(tp2p, ep, color.new(color.green, transp = 95), fillgaps=false)
+fill(sll , ep, color.new(color.red, transp = 95)  , fillgaps=false)
+
+//plotshape(longCondition1, "Buy", shape.labelup, location.belowbar, color=color.green, text="Buy", textcolor=color.white)
+//bgcolor(emaCrossOver ? color.green : na)
+
+
+
+
+
+//        d8888 888      8888888888 8888888b. 88888888888 .d8888b.  
+//       d88888 888      888        888   Y88b    888    d88P  Y88b 
+//      d88P888 888      888        888    888    888    Y88b.      
+//     d88P 888 888      8888888    888   d88P    888     "Y888b.   
+//    d88P  888 888      888        8888888P"     888        "Y88b. 
+//   d88P   888 888      888        888 T88b      888          "888 
+//  d8888888888 888      888        888  T88b     888    Y88b  d88P 
+// d88P     888 88888888 8888888888 888   T88b    888     "Y8888P"
+// up =  emaFast > emaMed  > emaSlow
+// alertconditoin(up,"We are up", alert.freq_once_per_bar)
+
+// strategyEntry(RUNNING, AS, STUDY) =>   RUNNING=='false' ? false : false 
+// strategyClose(ALERTS, NOT_STRATEGY) => ALERTS== 'false' ? false : false
+// isStrategy = false, isStudy = true
+
+
+
+// plotchar(direction, "Direction", "", location.top, size = size.tiny)
+
+
+// 888888b.         d8888  .d8888b.  888    d8P 88888888888 8888888888 .d8888b. 88888888888 8888888888 8888888b.  
+// 888  "88b       d88888 d88P  Y88b 888   d8P      888     888       d88P  Y88b    888     888        888   Y88b 
+// 888  .88P      d88P888 888    888 888  d8P       888     888       Y88b.         888     888        888    888 
+// 8888888K.     d88P 888 888        888d88K        888     8888888    "Y888b.      888     8888888    888   d88P 
+// 888  "Y88b   d88P  888 888        8888888b       888     888           "Y88b.    888     888        8888888P"  
+// 888    888  d88P   888 888    888 888  Y88b      888     888             "888    888     888        888 T88b   
+// 888   d88P d8888888888 Y88b  d88P 888   Y88b     888     888       Y88b  d88P    888     888        888  T88b  
+// 8888888P" d88P     888  "Y8888P"  888    Y88b    888     8888888888 "Y8888P"     888     8888888888 888   T88b
+
+float totalTrades = strategy.closedtrades
+float winrate = (strategy.wintrades / strategy.closedtrades) * 100
+
+var table tbl = table.new(position.top_right, 1, 6, border_width = 3)
+
+f_fillCell(_tbl, _column, _row, _text, _bgcolor, _textcolor) =>
+    table.cell(_tbl, _column, _row, _text, bgcolor = _bgcolor, text_color = _textcolor)
+    
+if barstate.islastconfirmedhistory
+    color bgcolor = color.new(color.gray, 80)
+    color textcolor = color.gray
+    f_fillCell(tbl, 0, 0, str.format("Total Trades\n{0,number,integer}", totalTrades), bgcolor, textcolor)
+    f_fillCell(tbl, 0, 1, str.format("Win Rate\n{0,number,#.##}%", winrate), bgcolor, textcolor)
+    f_fillCell(tbl, 0, 2, str.format("Return of Investment\n{0,number,#.##}%", 0), bgcolor, textcolor)
+    f_fillCell(tbl, 0, 3, str.format("Risk of Ruin\n{0,number,#.##}%", 0), bgcolor, textcolor)
+    f_fillCell(tbl, 0, 4, str.format("Kelly Criterion\n{0,number,#.##}%", 0), bgcolor, textcolor)
+    // f_fillCell(tbl, 0, 5, str.format("Start Time\n{0,date,yyyy/MM/dd hh:mm:ss}", i_startTime), bgcolor, textcolor)
+
+
+
+
